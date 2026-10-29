@@ -1102,37 +1102,47 @@ else:
         "The outlined BASE cell uses your selected assumptions."
     )
 
+    
     # Explain which input moves the value most, holding the other
     # input at its base-case level.
-    base_row = sensitivity.loc[wacc]
-    base_column = sensitivity[wacc_values and terminal_values[
-        min(range(len(terminal_values)),
-            key=lambda i: abs(terminal_values[i] - terminal_growth))
-    ]]
+    base_wacc_key = min(
+        sensitivity.index,
+        key=lambda value: abs(float(value) - float(wacc)),
+    )
 
+    base_terminal_key = min(
+        sensitivity.columns,
+        key=lambda value: abs(float(value) - float(terminal_growth)),
+    )
+
+    # WACC impact while holding terminal growth at its base case.
     wacc_range_values = [
-        sensitivity.loc[rate, terminal_growth]
-        for rate in wacc_values
-        if terminal_growth < rate
-        and np.isfinite(sensitivity.loc[rate, terminal_growth])
+        float(sensitivity.loc[rate, base_terminal_key])
+        for rate in sensitivity.index
+        if base_terminal_key < rate
+        and np.isfinite(sensitivity.loc[rate, base_terminal_key])
     ]
 
+    # Terminal-growth impact while holding WACC at its base case.
     growth_range_values = [
-        sensitivity.loc[wacc, terminal_g]
-        for terminal_g in terminal_values
-        if terminal_g < wacc
-        and np.isfinite(sensitivity.loc[wacc, terminal_g])
+        float(sensitivity.loc[base_wacc_key, terminal_g])
+        for terminal_g in sensitivity.columns
+        if terminal_g < base_wacc_key
+        and np.isfinite(sensitivity.loc[base_wacc_key, terminal_g])
     ]
 
     wacc_impact = (
         max(wacc_range_values) - min(wacc_range_values)
-        if len(wacc_range_values) >= 2 else np.nan
+        if len(wacc_range_values) >= 2
+        else np.nan
     )
 
     terminal_impact = (
         max(growth_range_values) - min(growth_range_values)
-        if len(growth_range_values) >= 2 else np.nan
+        if len(growth_range_values) >= 2
+        else np.nan
     )
+
 
     st.subheader("Sensitivity interpretation")
 
