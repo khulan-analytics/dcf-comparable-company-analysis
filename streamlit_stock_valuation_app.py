@@ -752,19 +752,29 @@ else:
 # ============================================================
 # PART 3 — COMPARABLE COMPANY ANALYSIS
 # ============================================================
-st.header("Part 3 — Comparable Company Analysis")
 
 peer_input = st.text_input(
-    "Enter peer tickers separated by commas",
-    value="MRK, PFE, ABBV, BMY, AMGN, GILD",
+    "Enter target company and peer tickers separated by commas",
+    value=f"{ticker}, PFE, ABBV, BMY, AMGN, GILD",
 )
 
-peer_tickers = list(dict.fromkeys(
-    peer.strip().upper()
-    for peer in peer_input.split(",")
-    if peer.strip() and peer.strip().upper() != ticker
+# Separate target company from comparable companies
+entered_tickers = list(dict.fromkeys(
+    symbol.strip().upper()
+    for symbol in peer_input.split(",")
+    if symbol.strip()
 ))
 
+# Always keep the main company as the target
+if ticker not in entered_tickers:
+    entered_tickers.insert(0, ticker)
+
+peer_tickers = [
+    symbol for symbol in entered_tickers
+    if symbol != ticker
+]
+
+# Retrieve peer multiples only
 peer_rows = []
 
 with st.spinner("Retrieving peer valuation multiples..."):
@@ -780,6 +790,7 @@ with st.spinner("Retrieving peer valuation multiples..."):
                     peer_info.get("priceToSalesTrailing12Months")
                 ),
             })
+
         except Exception:
             peer_rows.append({
                 "Ticker": peer,
@@ -788,46 +799,72 @@ with st.spinner("Retrieving peer valuation multiples..."):
                 "P/S": np.nan,
             })
 
+# Peer-only dataframe for calculating medians
 peers = pd.DataFrame(
     peer_rows,
     columns=["Ticker", "P/E", "EV/EBITDA", "P/S"],
 )
 
-peer_medians = peers[["P/E", "EV/EBITDA", "P/S"]].median(
-    numeric_only=True
-) if not peers.empty else pd.Series(dtype=float)
+# Target company (MRK) multiples
+target_row = {
+    "Ticker": ticker,
+    "P/E": number(info.get("trailingPE")),
+    "EV/EBITDA": number(info.get("enterpriseToEbitda")),
+    "P/S": number(info.get("priceToSalesTrailing12Months")),
+}
 
-if not peers.empty:
-    median_row = {"Ticker": "PEER MEDIAN"}
+# Calculate median using comparable companies ONLY
+peer_medians = (
+    peers[["P/E", "EV/EBITDA", "P/S"]].median()
+    if not peers.empty
+    else pd.Series(dtype=float)
+)
 
-    for col in ["P/E", "EV/EBITDA", "P/S"]:
-        values = peers[col].dropna()
-        median_row[col] = values.median() if not values.empty else np.nan
+# Add peer median row
+median_row = {"Ticker": "PEER MEDIAN"}
 
-    peers_display = pd.concat(
-        [peers, pd.DataFrame([median_row])],
-        ignore_index=True,
+for col in ["P/E", "EV/EBITDA", "P/S"]:
+    values = peers[col].dropna()
+    median_row[col] = (
+        values.median() if not values.empty else np.nan
     )
 
-    def highlight_median(row):
-        if row["Ticker"] == "PEER MEDIAN":
-            return [
-                "background-color: #d9ead3; font-weight: bold;"
-            ] * len(row)
-        return [""] * len(row)
+# Display target company, peers, and peer median
+peers_display = pd.concat(
+    [
+        pd.DataFrame([target_row]),
+        peers,
+        pd.DataFrame([median_row]),
+    ],
+    ignore_index=True,
+)
 
-    st.subheader("Peer multiples and median")
+def highlight_rows(row):
+    if row["Ticker"] == "PEER MEDIAN":
+        return [
+            "background-color: #d9ead3; font-weight: bold;"
+        ] * len(row)
 
-    st.dataframe(
-        peers_display.style
-        .format({
-            "P/E": "{:.2f}x",
-            "EV/EBITDA": "{:.2f}x",
-            "P/S": "{:.2f}x",
-        }, na_rep="N/A")
-        .apply(highlight_median, axis=1),
-        use_container_width=True,
-    )
+    if row["Ticker"] == ticker:
+        return [
+            "background-color: #d9eaf7; font-weight: bold;"
+        ] * len(row)
+
+    return [""] * len(row)
+
+st.subheader("Target Company and Comparable Company Multiples")
+
+st.dataframe(
+    peers_display.style
+    .format({
+        "P/E": "{:.2f}x",
+        "EV/EBITDA": "{:.2f}x",
+        "P/S": "{:.2f}x",
+    }, na_rep="N/A")
+    .apply(highlight_rows, axis=1),
+    use_container_width=True,
+)
+
 
     # Company's corresponding metrics.
     eps = number(info.get("trailingEps"))
