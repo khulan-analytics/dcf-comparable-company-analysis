@@ -755,8 +755,7 @@ st.header("Part 3 — Comparable Company Analysis")
 
 peer_input = st.text_input(
     "Enter peer tickers separated by commas",
-    value="MRK, PFE, ABBV, BMY, AMGN, GILD",
-    key="peer_ticker_input",
+    value="PFE, ABBV, BMY, AMGN, GILD",
 )
 
 peer_tickers = list(dict.fromkeys(
