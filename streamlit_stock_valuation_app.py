@@ -761,8 +761,9 @@ peer_input = st.text_input(
 peer_tickers = list(dict.fromkeys(
     peer.strip().upper()
     for peer in peer_input.split(",")
-    if peer.strip() and peer.strip().upper() != ticker
+    if peer.strip() and peer.strip().upper() != ticker.upper()
 ))
+st.write("Selected peer tickers:", peer_tickers)
 
 peer_rows = []
 
