@@ -894,7 +894,7 @@ if not peers.empty:
         ],
     })
 
-    st.subheader("Implied value from each peer multiple")
+    st.subheader("MRK Implied Share Price Using Peer Market Benchmarks")
 
     st.dataframe(
         implied_values.style.format({
