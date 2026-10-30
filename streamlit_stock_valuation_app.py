@@ -1,4 +1,3 @@
-
 import warnings
 from pathlib import Path
 
@@ -752,9 +751,6 @@ else:
 # ============================================================
 # PART 3 — COMPARABLE COMPANY ANALYSIS
 # ============================================================
-i wanna add MRK in the box and tell me how to fix the code: # ============================================================
-# PART 3 — COMPARABLE COMPANY ANALYSIS
-# ============================================================
 st.header("Part 3 — Comparable Company Analysis")
 
 peer_input = st.text_input(
@@ -982,6 +978,8 @@ if not peers.empty:
 else:
     comps_value = np.nan
     st.info("Enter peer tickers to calculate comparable-company valuations.")
+
+
 # ============================================================
 # PART 4 — TWO-WAY SENSITIVITY ANALYSIS
 # ============================================================
