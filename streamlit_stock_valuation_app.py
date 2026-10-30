@@ -756,6 +756,7 @@ st.header("Part 3 — Comparable Company Analysis")
 peer_input = st.text_input(
     "Enter peer tickers separated by commas",
     value="MRK, PFE, ABBV, BMY, AMGN, GILD",
+    key="peer_ticker_input",
 )
 
 peer_tickers = list(dict.fromkeys(
@@ -763,7 +764,7 @@ peer_tickers = list(dict.fromkeys(
     for peer in peer_input.split(",")
     if peer.strip() and peer.strip().upper() != ticker.upper()
 ))
-st.write("Selected peer tickers:", peer_tickers)
+
 
 peer_rows = []
 
