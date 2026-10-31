@@ -981,6 +981,7 @@ else:
     st.info("Enter peer tickers to calculate comparable-company valuations.")
 
 
+
 # ============================================================
 # PART 4 — TWO-WAY SENSITIVITY ANALYSIS
 # ============================================================
@@ -989,27 +990,29 @@ st.header("Part 4 — Sensitivity Analysis")
 if dcf is None:
     st.warning(
         "Sensitivity analysis requires a valid base-case DCF. "
-        "Check the FCF data and ensure terminal growth is below WACC."
+        "Check FCF data and ensure terminal growth is below WACC."
     )
+
 else:
-    # The selected assumptions are explicitly included in both axes.
+    # --------------------------------------------------------
+    # 1. Create grids centered on the selected base assumptions
+    # --------------------------------------------------------
+
     wacc_values = sorted(set(
-        [round(float(wacc), 6)]
-        + [
-            round(float(wacc + delta), 6)
-            for delta in [-0.03, -0.02, -0.01, 0.01, 0.02, 0.03]
-            if 0.01 <= wacc + delta <= 0.30
-        ]
+        round(wacc + delta, 6)
+        for delta in [-0.03, -0.02, -0.01, 0, 0.01, 0.02, 0.03]
+        if 0.01 <= wacc + delta <= 0.30
     ))
 
     terminal_values = sorted(set(
-        [round(float(terminal_growth), 6)]
-        + [
-            round(float(terminal_growth + delta), 6)
-            for delta in [-0.02, -0.01, -0.005, 0.005, 0.01, 0.02]
-            if -0.05 <= terminal_growth + delta <= 0.15
-        ]
+        round(terminal_growth + delta, 6)
+        for delta in [-0.02, -0.01, -0.005, 0, 0.005, 0.01, 0.02]
+        if -0.05 <= terminal_growth + delta <= 0.15
     ))
+
+    # --------------------------------------------------------
+    # 2. Calculate intrinsic value for every combination
+    # --------------------------------------------------------
 
     sensitivity = pd.DataFrame(
         index=wacc_values,
@@ -1019,6 +1022,7 @@ else:
 
     for rate in wacc_values:
         for terminal_g in terminal_values:
+
             result = calculate_dcf(
                 base_fcf,
                 growth,
@@ -1032,10 +1036,14 @@ else:
 
             sensitivity.loc[rate, terminal_g] = (
                 result["intrinsic"]
-                if result is not None else np.nan
+                if result is not None
+                else np.nan
             )
 
-    # Build the heatmap with the exact base-case cell marked.
+    # --------------------------------------------------------
+    # 3. Display heatmap and mark the base-case cell
+    # --------------------------------------------------------
+
     x_labels = [f"{g:.2%}" for g in terminal_values]
     y_labels = [f"{r:.2%}" for r in wacc_values]
 
@@ -1047,36 +1055,43 @@ else:
         for terminal_g in terminal_values:
             value = sensitivity.loc[rate, terminal_g]
 
-            if np.isclose(rate, wacc) and np.isclose(
-                terminal_g, terminal_growth
+            if (
+                np.isclose(rate, wacc)
+                and np.isclose(terminal_g, terminal_growth)
             ):
                 row.append(
                     f"BASE<br>{money(value)}"
-                    if np.isfinite(value) else "BASE<br>N/A"
+                    if np.isfinite(value)
+                    else "BASE<br>N/A"
                 )
             else:
                 row.append(
-                    money(value) if np.isfinite(value) else "N/A"
+                    money(value)
+                    if np.isfinite(value)
+                    else "N/A"
                 )
 
         cell_text.append(row)
 
-    heatmap = go.Figure(data=go.Heatmap(
-        z=sensitivity.to_numpy(dtype=float),
-        x=x_labels,
-        y=y_labels,
-        text=cell_text,
-        texttemplate="%{text}",
-        colorscale="RdYlGn",
-        colorbar={"title": "Value / share"},
-        hovertemplate=(
-            "WACC: %{y}<br>"
-            "Terminal growth: %{x}<br>"
-            "Intrinsic value: $%{z:,.2f}"
-            "<extra></extra>"
-        ),
-    ))
+    heatmap = go.Figure(
+        data=go.Heatmap(
+            z=sensitivity.to_numpy(dtype=float),
+            x=x_labels,
+            y=y_labels,
+            text=cell_text,
+            texttemplate="%{text}",
+            colorscale="RdYlGn",
+            colorbar={"title": "Value / share"},
+            hovertemplate=(
+                "WACC: %{y}<br>"
+                "Terminal growth: %{x}<br>"
+                "Intrinsic value: $%{z:,.2f}"
+                "<extra></extra>"
+            ),
+        )
+    )
 
+    # Highlight the base-case cell
     base_x = x_labels.index(f"{terminal_growth:.2%}")
     base_y = y_labels.index(f"{wacc:.2%}")
 
@@ -1090,95 +1105,118 @@ else:
     )
 
     heatmap.update_layout(
-        title="Intrinsic Value Sensitivity — BASE cell outlined",
+        title="MRK DCF Sensitivity: WACC vs. Terminal Growth",
         xaxis_title="Terminal Growth",
         yaxis_title="WACC",
     )
 
-    st.plotly_chart(heatmap, use_container_width=True)
-
-    st.caption(
-        "Rows are WACC; columns are terminal growth. "
-        "The outlined BASE cell uses your selected assumptions."
+    st.plotly_chart(
+        heatmap,
+        use_container_width=True,
     )
 
-    
-    # Explain which input moves the value most, holding the other
-    # input at its base-case level.
+    st.caption(
+        "Rows represent WACC and columns represent terminal growth. "
+        "The outlined BASE cell uses the selected Part 2 assumptions."
+    )
+
+    # --------------------------------------------------------
+    # 4. Identify which assumption moves valuation the most
+    # --------------------------------------------------------
+
     base_wacc_key = min(
         sensitivity.index,
-        key=lambda value: abs(float(value) - float(wacc)),
+        key=lambda x: abs(float(x) - wacc),
     )
 
     base_terminal_key = min(
         sensitivity.columns,
-        key=lambda value: abs(float(value) - float(terminal_growth)),
+        key=lambda x: abs(float(x) - terminal_growth),
     )
 
-    # WACC impact while holding terminal growth at its base case.
-    wacc_range_values = [
-        float(sensitivity.loc[rate, base_terminal_key])
-        for rate in sensitivity.index
-        if base_terminal_key < rate
-        and np.isfinite(sensitivity.loc[rate, base_terminal_key])
-    ]
+    # Change WACC while holding terminal growth constant
+    wacc_values_range = (
+        sensitivity[base_terminal_key].dropna().astype(float)
+    )
 
-    # Terminal-growth impact while holding WACC at its base case.
-    growth_range_values = [
-        float(sensitivity.loc[base_wacc_key, terminal_g])
-        for terminal_g in sensitivity.columns
-        if terminal_g < base_wacc_key
-        and np.isfinite(sensitivity.loc[base_wacc_key, terminal_g])
-    ]
+    # Change terminal growth while holding WACC constant
+    terminal_values_range = (
+        sensitivity.loc[base_wacc_key].dropna().astype(float)
+    )
 
     wacc_impact = (
-        max(wacc_range_values) - min(wacc_range_values)
-        if len(wacc_range_values) >= 2
+        wacc_values_range.max() - wacc_values_range.min()
+        if len(wacc_values_range) >= 2
         else np.nan
     )
 
     terminal_impact = (
-        max(growth_range_values) - min(growth_range_values)
-        if len(growth_range_values) >= 2
+        terminal_values_range.max() - terminal_values_range.min()
+        if len(terminal_values_range) >= 2
         else np.nan
     )
 
+    # --------------------------------------------------------
+    # 5. Interpret sensitivity results
+    # --------------------------------------------------------
 
-    st.subheader("Sensitivity interpretation")
+    st.subheader("Sensitivity Interpretation")
 
     st.write(
-        f"At the base-case assumptions, intrinsic value is "
-        f"**{money(dcf_value)} per share**."
+        f"At the base-case assumptions, MRK's estimated intrinsic "
+        f"value is **{money(dcf_value)} per share**."
     )
 
     if np.isfinite(wacc_impact) and np.isfinite(terminal_impact):
+
         if wacc_impact > terminal_impact:
             st.write(
-                f"Across the tested grid, **WACC** moves valuation more "
-                f"({money(wacc_impact)} range versus "
-                f"{money(terminal_impact)} for terminal growth), "
-                "holding the other assumption at its base value."
+                f"**WACC has the greater impact on valuation.** "
+                f"Changing WACC produces a valuation range of "
+                f"{money(wacc_impact)}, compared with "
+                f"{money(terminal_impact)} for terminal growth."
             )
+
         elif terminal_impact > wacc_impact:
             st.write(
-                f"Across the tested grid, **terminal growth** moves "
-                f"valuation more ({money(terminal_impact)} range versus "
-                f"{money(wacc_impact)} for WACC), holding the other "
-                "assumption at its base value."
+                f"**Terminal growth has the greater impact on valuation.** "
+                f"Changing terminal growth produces a valuation range of "
+                f"{money(terminal_impact)}, compared with "
+                f"{money(wacc_impact)} for WACC."
             )
+
         else:
             st.write(
-                "WACC and terminal growth have equal valuation ranges "
+                "WACC and terminal growth produce equal valuation ranges "
                 "across the tested grid."
             )
 
+    # --------------------------------------------------------
+    # 6. Compare each grid value with market price
+    # --------------------------------------------------------
+
     if np.isfinite(price):
+
+        undervalued_cells = (
+            sensitivity > price
+        ).sum().sum()
+
+        overvalued_cells = (
+            sensitivity < price
+        ).sum().sum()
+
         st.write(
-            f"Cells with intrinsic value above the market price "
-            f"({money(price)}) suggest potential undervaluation under "
-            "those assumptions. Cells below the market price suggest "
-            "potential overvaluation. This is a model comparison, "
-            "not a prediction."
+            f"Compared with the current market price of "
+            f"**{money(price)}**, {undervalued_cells} grid combinations "
+            f"produce an intrinsic value above market price, suggesting "
+            f"potential undervaluation. {overvalued_cells} combinations "
+            f"produce a value below market price, suggesting potential "
+            f"overvaluation."
+        )
+
+        st.caption(
+            "These comparisons reflect the model assumptions and are "
+            "not predictions of future stock performance."
         )
 
 
