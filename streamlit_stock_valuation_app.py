@@ -564,7 +564,23 @@ debt = first_valid(
 
 base_fcf = fundamentals["base_fcf"]
 
+# ============================================================
+# PROJECT TITLE & AUTHOR
+# ============================================================
+st.title("MRK Equity Valuation Lab")
 
+st.caption(
+    "Created by Khulan Ganzorig | "
+    "MS in Business Analytics, University at Buffalo"
+)
+
+st.caption(
+    "An equity research project covering financial statement analysis, "
+    "DCF valuation, comparable company analysis, sensitivity analysis, "
+    "and scenario modeling."
+)
+
+st.divider()
 # ============================================================
 # PART 1 — FUNDAMENTALS & FREE CASH FLOW
 # ============================================================
