@@ -13,17 +13,26 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # SETUP
 # ============================================================
 st.set_page_config(
-    page_title="Stock Valuation Dashboard",
+    page_title="Merck & Co., Inc. (MRK) Equity Valuation Lab",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("Stock Valuation Dashboard")
+st.title("MRK Equity Valuation Lab")
 st.caption(
-    "Part 1: Fundamentals | Part 2: DCF | "
-    "Part 3: Comparable Companies | Part 4: Sensitivity | "
-    "Part 5: Extensions"
+    "Created by Khulan Ganzorig | "
+    "MS in Business Analytics, University at Buffalo"
 )
+
+st.markdown(
+    """
+    An equity research project covering financial statement analysis,
+    DCF valuation, comparable company analysis, sensitivity analysis,
+    and scenario modeling.
+    """
+)
+
+st.divider()
 
 CACHE_DIR = Path("data_cache")
 CACHE_DIR.mkdir(exist_ok=True)
@@ -564,23 +573,6 @@ debt = first_valid(
 
 base_fcf = fundamentals["base_fcf"]
 
-# ============================================================
-# PROJECT TITLE & AUTHOR
-# ============================================================
-st.title("MRK Equity Valuation Lab")
-
-st.caption(
-    "Created by Khulan Ganzorig | "
-    "MS in Business Analytics, University at Buffalo"
-)
-
-st.caption(
-    "An equity research project covering financial statement analysis, "
-    "DCF valuation, comparable company analysis, sensitivity analysis, "
-    "and scenario modeling."
-)
-
-st.divider()
 # ============================================================
 # PART 1 — FUNDAMENTALS & FREE CASH FLOW
 # ============================================================
