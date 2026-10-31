@@ -18,7 +18,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("MRK Equity Valuation Lab")
+st.title("Merck & Co., Inc. (MRK) Equity Valuation Lab")
 st.caption(
     "Created by Khulan Ganzorig | "
     "MS in Business Analytics, University at Buffalo"
