@@ -556,17 +556,6 @@ if not np.isfinite(market_cap) and price > 0 and shares > 0:
 if not np.isfinite(shares) and market_cap > 0 and price > 0:
     shares = market_cap / price
 
-# Temporary debug output
-st.subheader("Debug — Market Data")
-
-st.write({
-    "Data source": data_message,
-    "Stock price": price,
-    "Raw market cap": info.get("marketCap"),
-    "Raw shares outstanding": info.get("sharesOutstanding"),
-    "Calculated market cap": market_cap,
-    "Calculated shares": shares,
-})
 
 cash = first_valid(
     info.get("totalCash"),
