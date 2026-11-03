@@ -548,6 +548,9 @@ price = number(data.get("price"))
 shares = number(info.get("sharesOutstanding"))
 market_cap = number(info.get("marketCap"))
 
+if not np.isfinite(market_cap) and price > 0 and shares > 0:
+    market_cap = price * shares
+
 if not np.isfinite(shares) and np.isfinite(market_cap) and price > 0:
     shares = market_cap / price
 
