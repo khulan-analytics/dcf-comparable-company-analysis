@@ -548,14 +548,13 @@ price = number(data.get("price"))
 shares = number(info.get("sharesOutstanding"))
 market_cap = number(info.get("marketCap"))
 
+# Calculate missing market capitalization
 if not np.isfinite(market_cap) and price > 0 and shares > 0:
     market_cap = price * shares
 
-if not np.isfinite(shares) and np.isfinite(market_cap) and price > 0:
+# Calculate missing shares outstanding
+if not np.isfinite(shares) and market_cap > 0 and price > 0:
     shares = market_cap / price
-
-if not np.isfinite(market_cap) and price > 0 and shares > 0:
-    market_cap = price * shares
 
 cash = first_valid(
     info.get("totalCash"),
