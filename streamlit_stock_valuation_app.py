@@ -13,17 +13,26 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # SETUP
 # ============================================================
 st.set_page_config(
-    page_title="Stock Valuation Dashboard",
+    page_title="Merck & Co., Inc. (MRK) Equity Valuation Lab",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("Stock Valuation Dashboard")
+st.title("Merck & Co., Inc. (MRK) Equity Valuation Lab")
 st.caption(
-    "Part 1: Fundamentals | Part 2: DCF | "
-    "Part 3: Comparable Companies | Part 4: Sensitivity | "
-    "Part 5: Extensions"
+    "Created by Khulan Ganzorig | "
+    "MS in Business Analytics, University at Buffalo"
 )
+
+st.markdown(
+    """
+    An equity research project covering financial statement analysis,
+    DCF valuation, comparable company analysis, sensitivity analysis,
+    and scenario modeling.
+    """
+)
+
+st.divider()
 
 CACHE_DIR = Path("data_cache")
 CACHE_DIR.mkdir(exist_ok=True)
@@ -539,11 +548,14 @@ price = number(data.get("price"))
 shares = number(info.get("sharesOutstanding"))
 market_cap = number(info.get("marketCap"))
 
-if not np.isfinite(shares) and np.isfinite(market_cap) and price > 0:
-    shares = market_cap / price
-
+# Calculate missing market capitalization
 if not np.isfinite(market_cap) and price > 0 and shares > 0:
     market_cap = price * shares
+
+# Calculate missing shares outstanding
+if not np.isfinite(shares) and market_cap > 0 and price > 0:
+    shares = market_cap / price
+
 
 cash = first_valid(
     info.get("totalCash"),
@@ -563,7 +575,6 @@ debt = first_valid(
 )
 
 base_fcf = fundamentals["base_fcf"]
-
 
 # ============================================================
 # PART 1 — FUNDAMENTALS & FREE CASH FLOW
