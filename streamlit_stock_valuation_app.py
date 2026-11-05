@@ -1,15 +1,18 @@
 import yfinance as yf
+import streamlit as st
 
-mrk = yf.Ticker("MRK")
+ticker = yf.Ticker("MRK")
 
-print("PRICE DATA:")
-print(mrk.history(period="5d"))
+st.subheader("MRK Data Diagnostics")
 
-print("\nINCOME STATEMENT:")
-print(mrk.income_stmt)
+st.write("Company information:")
+st.write(ticker.info)
 
-print("\nBALANCE SHEET:")
-print(mrk.balance_sheet)
+st.write("Income Statement:")
+st.dataframe(ticker.income_stmt)
 
-print("\nCASH FLOW:")
-print(mrk.cashflow)
+st.write("Balance Sheet:")
+st.dataframe(ticker.balance_sheet)
+
+st.write("Cash Flow:")
+st.dataframe(ticker.cashflow)
