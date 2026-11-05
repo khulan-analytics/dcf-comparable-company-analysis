@@ -1,20 +1,26 @@
 
 # ============================================================
 # MRK EQUITY VALUATION DASHBOARD
-# Fundamentals | DCF | CAPM/WACC | Comparable Companies
-# Sensitivity Analysis | Bull/Base/Bear Scenarios
+# Part 1: Fundamentals and Free Cash Flow
+# Part 2: DCF Valuation and CAPM / WACC
+# Part 3: Comparable Company Analysis
+# Part 4: Sensitivity Analysis
+# Part 5: Bull / Base / Bear Scenarios
 # ============================================================
 
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.express as px
 
-# ------------------------------------------------------------
+from io import BytesIO
+
+
+# ============================================================
 # PAGE CONFIGURATION
-# ------------------------------------------------------------
+# ============================================================
 
 st.set_page_config(
     page_title="MRK Equity Valuation",
@@ -23,13 +29,10 @@ st.set_page_config(
 )
 
 st.title("MRK | Equity Valuation Dashboard")
-st.caption(
-    "Fundamental Analysis • Discounted Cash Flow • Comparable Companies"
-)
 
-# ------------------------------------------------------------
-# CUSTOM STYLE
-# ------------------------------------------------------------
+st.caption(
+    "Fundamental Analysis | DCF | CAPM / WACC | Comparable Companies"
+)
 
 st.markdown("""
 <style>
@@ -37,70 +40,118 @@ st.markdown("""
         padding-top: 1.5rem;
         padding-bottom: 2rem;
     }
-
     div[data-testid="stMetric"] {
         background-color: rgba(128,128,128,0.08);
-        padding: 15px;
+        padding: 12px;
         border-radius: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ------------------------------------------------------------
+# ============================================================
 # 1. HELPER FUNCTIONS
-# ------------------------------------------------------------
+# ============================================================
 
 def pick(df, *labels, default=np.nan):
-    """Return the first matching column label, else a default."""
+    """Return the first matching column label, otherwise N/A."""
 
     for label in labels:
         if label in df.columns:
             return df[label]
 
-    return default
+    return pd.Series(default, index=df.index)
 
 
-def scalar(value, default=np.nan):
-    """Safely convert a value into a float."""
+def number(value, default=np.nan):
+    """Safely convert values to float."""
 
     try:
-        if value is None:
-            return default
-
         value = float(value)
 
         if np.isfinite(value):
             return value
 
-        return default
-
     except (TypeError, ValueError):
-        return default
+        pass
+
+    return default
 
 
-def format_money(value):
+def latest_value(df, *labels):
+    """Return the latest available value from a statement."""
+
+    if df.empty:
+        return np.nan
+
+    result = pick(df, *labels)
+
+    if isinstance(result, pd.Series):
+        result = result.dropna()
+
+        if not result.empty:
+            return number(result.iloc[-1])
+
+    return np.nan
+
+
+def ratio(a, b):
+    a = number(a)
+    b = number(b)
+
+    if pd.isna(a) or pd.isna(b) or b == 0:
+        return np.nan
+
+    return a / b
+
+
+def money(value):
     if pd.isna(value):
         return "N/A"
 
     return f"${value:,.2f}"
 
 
-def format_billions(value):
+def billions(value):
     if pd.isna(value):
         return "N/A"
 
     return f"${value / 1e9:,.2f}B"
 
 
-def get_statement(ticker, statement_type, uploaded_file=None):
-    """
-    Download financial statements using yfinance.
-    If unavailable, use an uploaded cached CSV.
-    """
+def percent(value):
+    if pd.isna(value):
+        return "N/A"
+
+    return f"{value:.2%}"
+
+
+def read_uploaded_csv(uploaded_file):
+    """Read a cached statement CSV."""
+
+    if uploaded_file is None:
+        return pd.DataFrame()
 
     try:
-        stock = yf.Ticker(ticker)
+        df = pd.read_csv(
+            BytesIO(uploaded_file.getvalue()),
+            index_col=0
+        )
+
+        df.index = pd.to_datetime(df.index)
+
+        df = df.sort_index()
+
+        return df
+
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_statement(stock, statement_type, uploaded_file=None):
+    """Try Yahoo Finance first, then the uploaded CSV."""
+
+    try:
 
         if statement_type == "income":
             df = stock.income_stmt
@@ -125,74 +176,70 @@ def get_statement(ticker, statement_type, uploaded_file=None):
     except Exception:
         pass
 
-    # CSV FALLBACK
+    df = read_uploaded_csv(uploaded_file)
 
-    if uploaded_file is not None:
-
-        try:
-            df = pd.read_csv(uploaded_file, index_col=0)
-
-            df.index = pd.to_datetime(df.index)
-            df = df.sort_index()
-
-            return df, "Uploaded CSV"
-
-        except Exception:
-            pass
+    if not df.empty:
+        return df, "Uploaded CSV"
 
     return pd.DataFrame(), "Unavailable"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_stock_info(ticker):
+def load_yahoo_data(ticker):
+    """Download company information and financial statements."""
+
     stock = yf.Ticker(ticker)
 
-    info = stock.info
+    result = {
+        "income": pd.DataFrame(),
+        "balance": pd.DataFrame(),
+        "cashflow": pd.DataFrame(),
+        "info": {}
+    }
 
-    return info
+    try:
+        result["income"] = stock.income_stmt
+
+    except Exception:
+        pass
+
+    try:
+        result["balance"] = stock.balance_sheet
+
+    except Exception:
+        pass
+
+    try:
+        result["cashflow"] = stock.cashflow
+
+    except Exception:
+        pass
+
+    try:
+        result["info"] = stock.info
+
+    except Exception:
+        pass
+
+    return result
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_price_history(ticker):
-    stock = yf.Ticker(ticker)
+def load_market_price(ticker):
 
-    history = stock.history(period="1mo")
+    try:
+        history = yf.Ticker(ticker).history(
+            period="1mo",
+            auto_adjust=True
+        )
 
-    if history.empty:
-        return np.nan
+        if not history.empty:
+            return number(history["Close"].dropna().iloc[-1])
 
-    return scalar(history["Close"].dropna().iloc[-1])
+    except Exception:
+        pass
 
-
-def get_value(df, *labels, default=np.nan):
-    """Safely retrieve the latest available statement value."""
-
-    if df.empty:
-        return default
-
-    result = pick(df, *labels, default=default)
-
-    if isinstance(result, pd.Series):
-
-        result = result.dropna()
-
-        if not result.empty:
-            return scalar(result.iloc[-1], default)
-
-    return default
-
-
-def safe_ratio(numerator, denominator):
-    numerator = scalar(numerator)
-    denominator = scalar(denominator)
-
-    if pd.isna(numerator) or pd.isna(denominator):
-        return np.nan
-
-    if denominator == 0:
-        return np.nan
-
-    return numerator / denominator
+    return np.nan
 
 
 def calculate_dcf(
@@ -205,19 +252,19 @@ def calculate_dcf(
     debt,
     shares
 ):
-    """Calculate FCFF DCF valuation."""
+    """Calculate FCFF discounted cash flow valuation."""
 
     if wacc <= terminal_growth:
-        raise ValueError("WACC must be greater than terminal growth.")
+        raise ValueError("Terminal growth must be below WACC.")
 
     if wacc <= -1:
         raise ValueError("WACC must be greater than -100%.")
 
     if years < 1:
-        raise ValueError("Forecast years must be at least 1.")
+        raise ValueError("Forecast years must be positive.")
 
     if pd.isna(base_fcf) or base_fcf <= 0:
-        raise ValueError("Base FCF must be positive.")
+        raise ValueError("A positive base FCF is required.")
 
     if pd.isna(shares) or shares <= 0:
         raise ValueError("Valid shares outstanding are required.")
@@ -241,8 +288,8 @@ def calculate_dcf(
 
     intrinsic = equity / shares
 
-    terminal_percentage = (
-        pv_terminal / enterprise * 100
+    terminal_pct = (
+        pv_terminal / enterprise
         if enterprise != 0 else np.nan
     )
 
@@ -254,13 +301,27 @@ def calculate_dcf(
         "enterprise": enterprise,
         "equity": equity,
         "intrinsic": intrinsic,
-        "terminal_percentage": terminal_percentage
+        "terminal_pct": terminal_pct
     }
 
 
-# ------------------------------------------------------------
-# 2. SIDEBAR INPUTS
-# ------------------------------------------------------------
+def peer_median(peer_df, column):
+
+    values = peer_df[column].dropna()
+
+    values = values[
+        np.isfinite(values) & (values > 0)
+    ]
+
+    if values.empty:
+        return np.nan
+
+    return values.median()
+
+
+# ============================================================
+# 2. SIDEBAR
+# ============================================================
 
 st.sidebar.title("Valuation Assumptions")
 
@@ -270,7 +331,7 @@ ticker = st.sidebar.text_input(
 ).strip().upper()
 
 if not ticker:
-    st.error("Please enter a valid ticker.")
+    st.error("Please enter a ticker.")
     st.stop()
 
 
@@ -278,12 +339,7 @@ if not ticker:
 # CSV FALLBACK
 # ------------------------------------------------------------
 
-st.sidebar.subheader("Data Fallback")
-
-st.sidebar.caption(
-    "Upload previously downloaded CSV statements if Yahoo Finance "
-    "is unavailable."
-)
+st.sidebar.subheader("Financial Data Backup")
 
 income_csv = st.sidebar.file_uploader(
     "Income Statement CSV",
@@ -305,10 +361,10 @@ cashflow_csv = st.sidebar.file_uploader(
 # SCENARIOS
 # ------------------------------------------------------------
 
-st.sidebar.subheader("Scenario Analysis")
+st.sidebar.subheader("Scenario")
 
 scenario = st.sidebar.selectbox(
-    "Select Scenario",
+    "Choose Scenario",
     ["Base", "Bull", "Bear"]
 )
 
@@ -317,20 +373,18 @@ scenario_settings = {
         "growth": 0.08,
         "terminal": 0.035
     },
-
     "Base": {
         "growth": 0.04,
         "terminal": 0.025
     },
-
     "Bear": {
         "growth": 0.00,
         "terminal": 0.015
     }
 }
 
-scenario_growth = scenario_settings[scenario]["growth"]
-scenario_terminal = scenario_settings[scenario]["terminal"]
+default_growth = scenario_settings[scenario]["growth"]
+default_terminal = scenario_settings[scenario]["terminal"]
 
 
 # ------------------------------------------------------------
@@ -341,32 +395,32 @@ st.sidebar.subheader("DCF Assumptions")
 
 growth = st.sidebar.slider(
     "Forecast FCF Growth",
-    min_value=-0.10,
-    max_value=0.20,
-    value=scenario_growth,
-    step=0.005,
-    format="%.2f%%"
+    -0.10,
+    0.20,
+    default_growth,
+    0.005,
+    format="%.2%"
 )
 
 terminal_growth = st.sidebar.slider(
     "Terminal Growth",
-    min_value=0.000,
-    max_value=0.050,
-    value=scenario_terminal,
-    step=0.005,
-    format="%.2f%%"
+    0.000,
+    0.050,
+    default_terminal,
+    0.005,
+    format="%.2%"
 )
 
 years = st.sidebar.slider(
     "Forecast Years",
-    min_value=3,
-    max_value=10,
-    value=5
+    3,
+    10,
+    5
 )
 
 
 # ------------------------------------------------------------
-# CAPM ASSUMPTIONS
+# CAPM / WACC ASSUMPTIONS
 # ------------------------------------------------------------
 
 st.sidebar.subheader("CAPM / WACC")
@@ -376,8 +430,7 @@ risk_free_rate = st.sidebar.number_input(
     min_value=0.0,
     max_value=0.15,
     value=0.04,
-    step=0.005,
-    format="%.3f"
+    step=0.005
 )
 
 market_return = st.sidebar.number_input(
@@ -385,25 +438,23 @@ market_return = st.sidebar.number_input(
     min_value=0.0,
     max_value=0.25,
     value=0.10,
-    step=0.005,
-    format="%.3f"
+    step=0.005
 )
 
 manual_beta = st.sidebar.number_input(
-    "Beta Override (0 = use Yahoo beta)",
+    "Beta Override (0 = Yahoo Beta)",
     min_value=0.0,
     max_value=5.0,
     value=0.0,
     step=0.05
 )
 
-manual_cost_debt = st.sidebar.number_input(
+manual_debt_cost = st.sidebar.number_input(
     "Pre-Tax Cost of Debt",
     min_value=0.0,
     max_value=0.20,
     value=0.055,
-    step=0.005,
-    format="%.3f"
+    step=0.005
 )
 
 tax_rate = st.sidebar.number_input(
@@ -416,76 +467,127 @@ tax_rate = st.sidebar.number_input(
 
 wacc_adjustment = st.sidebar.slider(
     "WACC Adjustment",
-    min_value=-0.05,
-    max_value=0.05,
-    value=0.0,
-    step=0.0025,
-    format="%.2f%%"
+    -0.03,
+    0.03,
+    0.0,
+    0.0025,
+    format="%.2%"
 )
 
 
 # ------------------------------------------------------------
-# COMPARABLE COMPANIES
+# PEER INPUT
 # ------------------------------------------------------------
 
 st.sidebar.subheader("Comparable Companies")
 
 peer_input = st.sidebar.text_input(
-    "Peer Tickers (comma separated)",
+    "Peer Tickers",
     value="ABBV, BMY, PFE, JNJ, GILD"
 )
 
-peers = [
-    x.strip().upper()
-    for x in peer_input.split(",")
-    if x.strip()
-]
-
-peers = list(dict.fromkeys(peers))
+peers = list(dict.fromkeys([
+    p.strip().upper()
+    for p in peer_input.split(",")
+    if p.strip()
+]))
 
 peers = [p for p in peers if p != ticker]
 
 
-# ------------------------------------------------------------
-# 3. DOWNLOAD COMPANY DATA
-# ------------------------------------------------------------
+# ============================================================
+# 3. LOAD COMPANY DATA
+# ============================================================
 
-with st.spinner(f"Loading {ticker} financial statements..."):
+with st.spinner(f"Loading financial data for {ticker}..."):
 
-    income, income_source = get_statement(
-        ticker, "income", income_csv
+    yahoo_data = load_yahoo_data(ticker)
+
+    stock = yf.Ticker(ticker)
+
+    income_yahoo = yahoo_data["income"]
+    balance_yahoo = yahoo_data["balance"]
+    cashflow_yahoo = yahoo_data["cashflow"]
+
+    info = yahoo_data["info"]
+
+    # Yahoo Finance statements are transposed
+    # and sorted by fiscal date.
+
+    if not income_yahoo.empty:
+        income_yahoo = income_yahoo.T
+        income_yahoo.index = pd.to_datetime(income_yahoo.index)
+        income_yahoo = income_yahoo.sort_index()
+
+    if not balance_yahoo.empty:
+        balance_yahoo = balance_yahoo.T
+        balance_yahoo.index = pd.to_datetime(balance_yahoo.index)
+        balance_yahoo = balance_yahoo.sort_index()
+
+    if not cashflow_yahoo.empty:
+        cashflow_yahoo = cashflow_yahoo.T
+        cashflow_yahoo.index = pd.to_datetime(cashflow_yahoo.index)
+        cashflow_yahoo = cashflow_yahoo.sort_index()
+
+
+# Use uploaded files if Yahoo data is unavailable
+
+if income_yahoo.empty:
+    income, income_source = load_statement(
+        stock, "income", income_csv
     )
+else:
+    income, income_source = income_yahoo, "Yahoo Finance"
 
-    balance, balance_source = get_statement(
-        ticker, "balance", balance_csv
+if balance_yahoo.empty:
+    balance, balance_source = load_statement(
+        stock, "balance", balance_csv
     )
+else:
+    balance, balance_source = balance_yahoo, "Yahoo Finance"
 
-    cashflow, cashflow_source = get_statement(
-        ticker, "cashflow", cashflow_csv
+if cashflow_yahoo.empty:
+    cashflow, cashflow_source = load_statement(
+        stock, "cashflow", cashflow_csv
     )
-
-try:
-    info = get_stock_info(ticker)
-
-except Exception:
-    info = {}
+else:
+    cashflow, cashflow_source = cashflow_yahoo, "Yahoo Finance"
 
 
-if income.empty and balance.empty and cashflow.empty:
+# Current price
 
-    st.error(
-        "No financial statements available. "
-        "Check the ticker or upload cached CSV files in the sidebar."
-    )
+market_price = number(info.get("currentPrice"))
 
-    st.stop()
+if pd.isna(market_price):
+    market_price = number(info.get("regularMarketPrice"))
 
+if pd.isna(market_price):
+    market_price = load_market_price(ticker)
+
+
+# Company beta
+
+beta = number(info.get("beta"))
+
+if manual_beta > 0:
+    beta = manual_beta
+
+
+# ============================================================
+# PART 1 — FUNDAMENTALS & FREE CASH FLOW
+# ============================================================
+
+st.header("Part 1 | Fundamentals & Free Cash Flow")
+
+st.caption(
+    f"Income: {income_source} | "
+    f"Balance Sheet: {balance_source} | "
+    f"Cash Flow: {cashflow_source}"
+)
 
 # ------------------------------------------------------------
-# 4. FUNDAMENTAL DATA EXTRACTION
+# INCOME STATEMENT
 # ------------------------------------------------------------
-
-# Income statement
 
 revenue = pick(
     income,
@@ -504,7 +606,9 @@ operating_income = pick(
     "Operating Income"
 )
 
-# Cash flow statement
+# ------------------------------------------------------------
+# CASH FLOW STATEMENT
+# ------------------------------------------------------------
 
 operating_cash_flow = pick(
     cashflow,
@@ -518,217 +622,190 @@ capex = pick(
     "Capital Expenditures"
 )
 
-# Free cash flow
+# FCF = Operating Cash Flow - Absolute CapEx
 
 fcf = operating_cash_flow - capex.abs()
 
-# Balance sheet
 
-total_assets = pick(
-    balance,
-    "Total Assets"
-)
+# ------------------------------------------------------------
+# BALANCE SHEET
+# ------------------------------------------------------------
 
-current_assets = pick(
+current_assets = latest_value(
     balance,
     "Current Assets"
 )
 
-current_liabilities = pick(
+current_liabilities = latest_value(
     balance,
     "Current Liabilities"
 )
 
-total_debt_series = pick(
-    balance,
-    "Total Debt",
-    "Long Term Debt And Capital Lease Obligation"
-)
-
-cash_series = pick(
+cash = latest_value(
     balance,
     "Cash And Cash Equivalents",
     "Cash Cash Equivalents And Short Term Investments"
 )
 
-equity_series = pick(
+debt = latest_value(
+    balance,
+    "Total Debt"
+)
+
+# If total debt is unavailable, calculate from components.
+
+if pd.isna(debt):
+
+    current_debt = latest_value(
+        balance,
+        "Current Debt",
+        "Current Debt And Capital Lease Obligation"
+    )
+
+    long_term_debt = latest_value(
+        balance,
+        "Long Term Debt",
+        "Long Term Debt And Capital Lease Obligation"
+    )
+
+    components = [
+        x for x in [current_debt, long_term_debt]
+        if pd.notna(x)
+    ]
+
+    if components:
+        debt = sum(components)
+
+equity_book = latest_value(
     balance,
     "Stockholders Equity",
     "Total Stockholder Equity",
     "Total Equity Gross Minority Interest"
 )
 
-# Debt and cash
+# Avoid silently treating missing balance sheet values as zero.
 
-debt = get_value(
-    balance,
-    "Total Debt",
-    "Long Term Debt And Capital Lease Obligation",
-    "Long Term Debt",
-    default=np.nan
-)
-
-cash = get_value(
-    balance,
-    "Cash And Cash Equivalents",
-    "Cash Cash Equivalents And Short Term Investments",
-    default=np.nan
-)
-
-# Avoid silently assuming missing cash or debt equals zero.
 if pd.isna(cash):
+    st.warning("Cash unavailable. DCF cash bridge cannot be verified.")
     cash = 0.0
-    st.warning("Cash balance unavailable. Zero is being used in the DCF bridge.")
 
 if pd.isna(debt):
+    st.warning("Debt unavailable. Zero debt is used provisionally.")
     debt = 0.0
-    st.warning("Debt balance unavailable. Zero is being used in the DCF bridge.")
 
-shares = scalar(
-    info.get("sharesOutstanding"),
-    np.nan
+current_ratio = ratio(
+    current_assets,
+    current_liabilities
 )
 
-beta = scalar(
-    info.get("beta"),
-    np.nan
+debt_equity = ratio(
+    debt,
+    equity_book
 )
-
-if manual_beta > 0:
-    beta = manual_beta
-
-market_price = scalar(
-    info.get("currentPrice"),
-    np.nan
-)
-
-if pd.isna(market_price):
-    market_price = scalar(
-        info.get("regularMarketPrice"),
-        np.nan
-    )
-
-if pd.isna(market_price):
-    try:
-        market_price = get_price_history(ticker)
-    except Exception:
-        market_price = np.nan
 
 
 # ------------------------------------------------------------
-# 5. FUNDAMENTAL ANALYSIS
+# FOUR-YEAR FINANCIAL TABLE
 # ------------------------------------------------------------
 
-st.header("Part 1 | Fundamentals & Free Cash Flow")
-
-st.caption(
-    f"Data sources: Income — {income_source} | "
-    f"Balance Sheet — {balance_source} | "
-    f"Cash Flow — {cashflow_source}"
+fundamentals = pd.concat(
+    [
+        revenue.rename("Revenue"),
+        net_income.rename("Net Income"),
+        operating_cash_flow.rename("Operating Cash Flow"),
+        capex.rename("Capital Expenditure"),
+        fcf.rename("Free Cash Flow")
+    ],
+    axis=1
 )
 
-# Combine financial data
-
-fundamentals = pd.DataFrame({
-    "Revenue": revenue,
-    "Net Income": net_income,
-    "Operating Cash Flow": operating_cash_flow,
-    "Capital Expenditure": capex,
-    "Free Cash Flow": fcf
-})
-
-fundamentals = fundamentals.sort_index(ascending=False).head(4)
+fundamentals = fundamentals.sort_index(
+    ascending=False
+).head(4)
 
 fundamentals["Revenue Growth"] = (
-    fundamentals["Revenue"].pct_change(-1) * 100
+    fundamentals["Revenue"].pct_change(-1)
 )
 
 fundamentals["Net Margin"] = (
     fundamentals["Net Income"]
-    / fundamentals["Revenue"] * 100
+    / fundamentals["Revenue"]
 )
 
 fundamentals["FCF Margin"] = (
     fundamentals["Free Cash Flow"]
-    / fundamentals["Revenue"] * 100
-)
-
-# Ratios
-
-current_assets_value = get_value(
-    balance,
-    "Current Assets"
-)
-
-current_liabilities_value = get_value(
-    balance,
-    "Current Liabilities"
-)
-
-equity = get_value(
-    balance,
-    "Stockholders Equity",
-    "Total Stockholder Equity",
-    "Total Equity Gross Minority Interest"
-)
-
-current_ratio = safe_ratio(
-    current_assets_value,
-    current_liabilities_value
-)
-
-debt_equity = safe_ratio(
-    debt,
-    equity
-)
-
-# Metrics
-
-col1, col2, col3, col4 = st.columns(4)
-
-col1.metric(
-    "Market Price",
-    format_money(market_price)
-)
-
-col2.metric(
-    "Market Beta",
-    f"{beta:.2f}" if pd.notna(beta) else "N/A"
-)
-
-col3.metric(
-    "Current Ratio",
-    f"{current_ratio:.2f}" if pd.notna(current_ratio) else "N/A"
-)
-
-col4.metric(
-    "Debt / Equity",
-    f"{debt_equity:.2f}" if pd.notna(debt_equity) else "N/A"
+    / fundamentals["Revenue"]
 )
 
 st.subheader("Historical Financial Performance")
 
 display_fundamentals = fundamentals.copy()
 
-for column in [
+money_columns = [
     "Revenue",
     "Net Income",
     "Operating Cash Flow",
     "Capital Expenditure",
     "Free Cash Flow"
-]:
-    display_fundamentals[column] = (
-        display_fundamentals[column] / 1e9
+]
+
+for col in money_columns:
+    display_fundamentals[col] = (
+        display_fundamentals[col] / 1e9
     )
 
 st.dataframe(
-    display_fundamentals.round(2),
+    display_fundamentals.style.format({
+        "Revenue": "${:,.2f}B",
+        "Net Income": "${:,.2f}B",
+        "Operating Cash Flow": "${:,.2f}B",
+        "Capital Expenditure": "${:,.2f}B",
+        "Free Cash Flow": "${:,.2f}B",
+        "Revenue Growth": "{:.2%}",
+        "Net Margin": "{:.2%}",
+        "FCF Margin": "{:.2%}"
+    }, na_rep="N/A"),
     width="stretch"
 )
 
-st.caption("Financial statement amounts are presented in billions of USD.")
+st.caption(
+    "Financial statement values are in USD billions. "
+    "Margins and growth are percentages."
+)
 
-# Financial chart
+
+# ------------------------------------------------------------
+# FUNDAMENTAL METRICS
+# ------------------------------------------------------------
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric(
+    "Market Price",
+    money(market_price)
+)
+
+col2.metric(
+    "Current Ratio",
+    f"{current_ratio:.2f}" if pd.notna(current_ratio) else "N/A"
+)
+
+col3.metric(
+    "Debt / Equity",
+    f"{debt_equity:.2f}" if pd.notna(debt_equity) else "N/A"
+)
+
+col4.metric(
+    "Company Beta",
+    f"{beta:.2f}" if pd.notna(beta) else "N/A"
+)
+
+
+# ------------------------------------------------------------
+# FUNDAMENTAL CHART
+# ------------------------------------------------------------
+
+st.subheader("Financial Performance Trend")
 
 chart_data = fundamentals[
     ["Revenue", "Net Income", "Free Cash Flow"]
@@ -748,11 +825,10 @@ for column in chart_data.columns:
     )
 
 fig_fundamentals.update_layout(
-    title="Revenue, Net Income and Free Cash Flow",
-    xaxis_title="Fiscal Year",
-    yaxis_title="USD Billions",
     template="plotly_dark",
     height=430,
+    xaxis_title="Fiscal Year",
+    yaxis_title="USD Billions",
     hovermode="x unified"
 )
 
@@ -763,347 +839,407 @@ st.plotly_chart(
 
 
 # ------------------------------------------------------------
-# 6. THREE-YEAR AVERAGE FCF
+# THREE-YEAR AVERAGE FCF
 # ------------------------------------------------------------
 
-st.subheader("Free Cash Flow Analysis")
+st.subheader("Three-Year Average Free Cash Flow")
 
 historical_fcf = fcf.dropna().sort_index()
 
 recent_fcf = historical_fcf.tail(3)
 
-if len(recent_fcf) < 3:
-
-    st.warning(
-        "Fewer than three years of FCF are available. "
-        "The average uses the available observations."
-    )
-
-base_fcf = scalar(recent_fcf.mean())
-
-fcf_col1, fcf_col2 = st.columns(2)
-
-fcf_col1.metric(
-    "3-Year Average FCF",
-    format_billions(base_fcf)
-)
-
-fcf_col2.metric(
-    "Latest FCF",
-    format_billions(
-        historical_fcf.iloc[-1]
-        if not historical_fcf.empty else np.nan
-    )
-)
-
-
-# ------------------------------------------------------------
-# 7. CAPM AND WACC
-# ------------------------------------------------------------
-
-st.header("Part 2 | DCF Valuation")
-
-st.subheader("Cost of Equity — CAPM")
-
-if pd.isna(beta):
-
-    st.warning(
-        "Yahoo Finance beta is unavailable. "
-        "Enter a beta override in the sidebar."
-    )
-
-    st.stop()
-
-cost_of_equity = (
-    risk_free_rate
-    + beta * (market_return - risk_free_rate)
-)
-
-# Market capitalization
-
-market_cap = scalar(
-    info.get("marketCap"),
-    np.nan
-)
-
-if pd.isna(market_cap) and pd.notna(shares) and pd.notna(market_price):
-    market_cap = shares * market_price
-
-# Market value weights
-
-if pd.isna(market_cap) or market_cap <= 0:
-
-    st.error(
-        "Market capitalization is unavailable. "
-        "WACC cannot be calculated reliably."
-    )
-
-    st.stop()
-
-total_capital = market_cap + debt
-
-equity_weight = market_cap / total_capital
-
-debt_weight = debt / total_capital
-
-after_tax_cost_debt = (
-    manual_cost_debt * (1 - tax_rate)
-)
-
-base_wacc = (
-    equity_weight * cost_of_equity
-    + debt_weight * after_tax_cost_debt
-)
-
-adjusted_wacc = base_wacc + wacc_adjustment
-
-# Display CAPM / WACC
-
-c1, c2, c3, c4 = st.columns(4)
-
-c1.metric(
-    "Cost of Equity",
-    f"{cost_of_equity:.2%}"
-)
-
-c2.metric(
-    "After-Tax Cost of Debt",
-    f"{after_tax_cost_debt:.2%}"
-)
-
-c3.metric(
-    "Baseline WACC",
-    f"{base_wacc:.2%}"
-)
-
-c4.metric(
-    "Adjusted WACC",
-    f"{adjusted_wacc:.2%}",
-    delta=f"{wacc_adjustment:.2%}"
-)
-
-st.write("**Capital Structure**")
-
-capital_structure = pd.DataFrame({
-    "Component": ["Equity", "Debt"],
-    "Market Value": [market_cap, debt],
-    "Weight": [equity_weight, debt_weight]
-})
-
-st.dataframe(
-    capital_structure.style.format({
-        "Market Value": "${:,.0f}",
-        "Weight": "{:.2%}"
-    }),
-    width="stretch"
-)
-
-st.caption(
-    "Cost of debt is an adjustable assumption. "
-    "Market capitalization and debt are used to determine capital weights."
-)
-
-
-# ------------------------------------------------------------
-# 8. DCF VALUATION
-# ------------------------------------------------------------
-
-st.subheader("Discounted Cash Flow Model")
-
-if adjusted_wacc <= terminal_growth:
-
-    st.error(
-        "DCF cannot be calculated: terminal growth must be "
-        "strictly below WACC. Adjust your assumptions in the sidebar."
-    )
-
-    st.stop()
-
-try:
-
-    dcf = calculate_dcf(
-        base_fcf=base_fcf,
-        growth=growth,
-        terminal_growth=terminal_growth,
-        years=years,
-        wacc=adjusted_wacc,
-        cash=cash,
-        debt=debt,
-        shares=shares
-    )
-
-except ValueError as error:
-
-    st.error(str(error))
-    st.stop()
-
-
-# DCF forecast table
-
-forecast_table = pd.DataFrame({
-    "Year": np.arange(1, years + 1),
-    "Projected FCF": dcf["projected"],
-    "Discount Factor": (
-        1 / (1 + adjusted_wacc)
-        ** np.arange(1, years + 1)
-    ),
-    "Present Value of FCF": dcf["pv"]
-})
-
-st.dataframe(
-    forecast_table.style.format({
-        "Projected FCF": "${:,.0f}",
-        "Discount Factor": "{:.4f}",
-        "Present Value of FCF": "${:,.0f}"
-    }),
-    width="stretch"
-)
-
-
-# DCF bridge
-
-dcf_bridge = pd.DataFrame({
-    "Valuation Component": [
-        "PV of Forecast FCF",
-        "PV of Terminal Value",
-        "Enterprise Value",
-        "Add: Cash",
-        "Less: Debt",
-        "Equity Value",
-        "Shares Outstanding"
-    ],
-
-    "Value": [
-        dcf["pv"].sum(),
-        dcf["pv_terminal"],
-        dcf["enterprise"],
-        cash,
-        -debt,
-        dcf["equity"],
-        shares
-    ]
-})
-
-st.subheader("Enterprise Value to Equity Value Bridge")
-
-st.dataframe(
-    dcf_bridge.style.format({
-        "Value": "${:,.0f}"
-    }),
-    width="stretch"
-)
-
-
-# Intrinsic value
-
-intrinsic_value = dcf["intrinsic"]
-
-upside = (
-    (intrinsic_value / market_price - 1) * 100
-    if pd.notna(market_price) and market_price > 0
+base_fcf = (
+    recent_fcf.mean()
+    if not recent_fcf.empty
     else np.nan
 )
 
-v1, v2, v3, v4 = st.columns(4)
+col1, col2 = st.columns(2)
 
-v1.metric(
-    "DCF Intrinsic Value",
-    format_money(intrinsic_value)
+col1.metric(
+    "3-Year Average FCF",
+    billions(base_fcf)
 )
 
-v2.metric(
-    "Current Market Price",
-    format_money(market_price)
+col2.metric(
+    "Latest FCF",
+    billions(
+        historical_fcf.iloc[-1]
+        if not historical_fcf.empty
+        else np.nan
+    )
 )
 
-v3.metric(
-    "Upside / Downside",
-    f"{upside:.2f}%" if pd.notna(upside) else "N/A"
+if len(recent_fcf) < 3:
+
+    st.warning(
+        f"Only {len(recent_fcf)} usable FCF observations found. "
+        "The average uses the available years."
+    )
+
+
+# ============================================================
+# PART 2 — DCF VALUATION
+# ============================================================
+
+st.header("Part 2 | DCF Valuation")
+
+st.subheader("CAPM — Cost of Equity")
+
+# ------------------------------------------------------------
+# MARKET CAPITALIZATION AND SHARES
+# ------------------------------------------------------------
+
+shares = number(
+    info.get("sharesOutstanding")
 )
 
-v4.metric(
-    "Terminal Value / EV",
-    f"{dcf['terminal_percentage']:.2f}%"
+market_cap = number(
+    info.get("marketCap")
 )
 
-# Valuation comparison chart
+if pd.isna(market_cap):
 
-if pd.notna(market_price):
+    if pd.notna(shares) and pd.notna(market_price):
+        market_cap = shares * market_price
 
-    valuation_chart = pd.DataFrame({
-        "Valuation": [
+# Fallback shares calculation
+
+if pd.isna(shares):
+
+    if (
+        pd.notna(market_cap)
+        and pd.notna(market_price)
+        and market_price > 0
+    ):
+        shares = market_cap / market_price
+
+
+# ------------------------------------------------------------
+# CAPM AND WACC
+# ------------------------------------------------------------
+
+wacc_available = False
+
+if pd.notna(beta):
+
+    cost_of_equity = (
+        risk_free_rate
+        + beta * (market_return - risk_free_rate)
+    )
+
+    after_tax_cost_debt = (
+        manual_debt_cost * (1 - tax_rate)
+    )
+
+    if (
+        pd.notna(market_cap)
+        and market_cap > 0
+    ):
+
+        total_capital = market_cap + debt
+
+        if total_capital > 0:
+
+            equity_weight = market_cap / total_capital
+
+            debt_weight = debt / total_capital
+
+            base_wacc = (
+                equity_weight * cost_of_equity
+                + debt_weight * after_tax_cost_debt
+            )
+
+            adjusted_wacc = (
+                base_wacc + wacc_adjustment
+            )
+
+            wacc_available = True
+
+            c1, c2, c3, c4 = st.columns(4)
+
+            c1.metric(
+                "Cost of Equity",
+                percent(cost_of_equity)
+            )
+
+            c2.metric(
+                "After-Tax Cost of Debt",
+                percent(after_tax_cost_debt)
+            )
+
+            c3.metric(
+                "Baseline WACC",
+                percent(base_wacc)
+            )
+
+            c4.metric(
+                "Adjusted WACC",
+                percent(adjusted_wacc)
+            )
+
+            st.subheader("Capital Structure")
+
+            capital_structure = pd.DataFrame({
+                "Component": ["Equity", "Debt"],
+                "Market Value": [market_cap, debt],
+                "Weight": [equity_weight, debt_weight]
+            })
+
+            st.dataframe(
+                capital_structure.style.format({
+                    "Market Value": "${:,.0f}",
+                    "Weight": "{:.2%}"
+                }),
+                width="stretch"
+            )
+
+            st.caption(
+                "Debt is represented by its balance sheet value, "
+                "used as a proxy for market value. Equity uses market capitalization."
+            )
+
+if not wacc_available:
+
+    st.warning(
+        "CAPM/WACC is unavailable. Check the company beta, "
+        "market capitalization and debt data. "
+        "A beta override is available in the sidebar."
+    )
+
+
+# ------------------------------------------------------------
+# DCF CALCULATION
+# ------------------------------------------------------------
+
+dcf = None
+intrinsic_value = np.nan
+upside = np.nan
+
+if not wacc_available:
+
+    st.info(
+        "DCF is waiting for valid CAPM/WACC inputs. "
+        "The fundamentals and comparable-company sections can still run."
+    )
+
+elif adjusted_wacc <= terminal_growth:
+
+    st.error(
+        "Invalid DCF assumptions: terminal growth must be strictly "
+        "below WACC. Change the assumptions in the sidebar."
+    )
+
+elif pd.isna(base_fcf) or base_fcf <= 0:
+
+    st.error(
+        "DCF requires positive historical average FCF. "
+        "Review MRK's cash flow statements before proceeding."
+    )
+
+elif pd.isna(shares) or shares <= 0:
+
+    st.error(
+        "Shares outstanding are unavailable. DCF per-share valuation "
+        "cannot be calculated."
+    )
+
+else:
+
+    try:
+
+        dcf = calculate_dcf(
+            base_fcf=base_fcf,
+            growth=growth,
+            terminal_growth=terminal_growth,
+            years=years,
+            wacc=adjusted_wacc,
+            cash=cash,
+            debt=debt,
+            shares=shares
+        )
+
+        intrinsic_value = dcf["intrinsic"]
+
+        if pd.notna(market_price) and market_price > 0:
+
+            upside = (
+                intrinsic_value / market_price - 1
+            )
+
+        st.subheader("DCF Forecast")
+
+        forecast_table = pd.DataFrame({
+            "Year": np.arange(1, years + 1),
+            "Projected FCF": dcf["projected"],
+            "Discount Factor": (
+                1 / (1 + adjusted_wacc)
+                ** np.arange(1, years + 1)
+            ),
+            "PV of FCF": dcf["pv"]
+        })
+
+        st.dataframe(
+            forecast_table.style.format({
+                "Projected FCF": "${:,.0f}",
+                "Discount Factor": "{:.4f}",
+                "PV of FCF": "${:,.0f}"
+            }),
+            width="stretch"
+        )
+
+        # Enterprise value bridge
+
+        st.subheader("Enterprise Value to Equity Value")
+
+        dcf_bridge = pd.DataFrame({
+            "Component": [
+                "PV of Forecast FCF",
+                "PV of Terminal Value",
+                "Enterprise Value",
+                "Add: Cash",
+                "Less: Debt",
+                "Equity Value",
+                "Shares Outstanding"
+            ],
+            "Value": [
+                dcf["pv"].sum(),
+                dcf["pv_terminal"],
+                dcf["enterprise"],
+                cash,
+                -debt,
+                dcf["equity"],
+                shares
+            ]
+        })
+
+        st.dataframe(
+            dcf_bridge.style.format({
+                "Value": "${:,.0f}"
+            }),
+            width="stretch"
+        )
+
+        # Valuation metrics
+
+        st.subheader("DCF Valuation Results")
+
+        v1, v2, v3, v4 = st.columns(4)
+
+        v1.metric(
             "Intrinsic Value",
-            "Market Price"
-        ],
-        "Share Price": [
-            intrinsic_value,
-            market_price
-        ]
-    })
+            money(intrinsic_value)
+        )
 
-    fig_valuation = px.bar(
-        valuation_chart,
-        x="Valuation",
-        y="Share Price",
-        text="Share Price",
-        title="DCF Intrinsic Value vs. Market Price",
-        template="plotly_dark"
-    )
+        v2.metric(
+            "Market Price",
+            money(market_price)
+        )
 
-    fig_valuation.update_traces(
-        texttemplate="$%{text:.2f}",
-        textposition="outside"
-    )
+        v3.metric(
+            "Upside / Downside",
+            percent(upside)
+        )
 
-    st.plotly_chart(
-        fig_valuation,
-        width="stretch"
-    )
+        v4.metric(
+            "Terminal Value / EV",
+            percent(dcf["terminal_pct"])
+        )
+
+        # DCF chart
+
+        valuation_chart = pd.DataFrame({
+            "Method": [
+                "DCF Intrinsic Value",
+                "Market Price"
+            ],
+            "Share Price": [
+                intrinsic_value,
+                market_price
+            ]
+        }).dropna()
+
+        fig_dcf = px.bar(
+            valuation_chart,
+            x="Method",
+            y="Share Price",
+            text="Share Price",
+            title="DCF Intrinsic Value vs. Market Price",
+            template="plotly_dark"
+        )
+
+        fig_dcf.update_traces(
+            texttemplate="$%{text:.2f}",
+            textposition="outside"
+        )
+
+        st.plotly_chart(
+            fig_dcf,
+            width="stretch"
+        )
+
+    except ValueError as error:
+
+        st.error(f"DCF calculation error: {error}")
 
 
-# ------------------------------------------------------------
-# 9. COMPARABLE COMPANY ANALYSIS
-# ------------------------------------------------------------
+# ============================================================
+# PART 3 — COMPARABLE COMPANY ANALYSIS
+# ============================================================
 
 st.header("Part 3 | Comparable Company Analysis")
 
 st.write(
-    "The following analysis compares MRK against pharmaceutical peers "
-    "using valuation multiples from Yahoo Finance."
+    "Compare MRK with selected pharmaceutical peers using "
+    "P/E, EV/EBITDA and P/S multiples."
 )
 
 peer_rows = []
 
-for peer in peers:
+with st.spinner("Loading comparable-company data..."):
 
-    try:
+    for peer in peers:
 
-        peer_info = get_stock_info(peer)
+        try:
 
-        peer_rows.append({
-            "Ticker": peer,
-            "P/E": scalar(peer_info.get("trailingPE")),
-            "EV/EBITDA": scalar(peer_info.get("enterpriseToEbitda")),
-            "P/S": scalar(
-                peer_info.get("priceToSalesTrailing12Months")
-            )
-        })
+            peer_info = load_yahoo_data(peer)["info"]
 
-    except Exception:
+            peer_rows.append({
+                "Ticker": peer,
+                "P/E": number(
+                    peer_info.get("trailingPE")
+                ),
+                "EV/EBITDA": number(
+                    peer_info.get("enterpriseToEbitda")
+                ),
+                "P/S": number(
+                    peer_info.get("priceToSalesTrailing12Months")
+                )
+            })
 
-        peer_rows.append({
-            "Ticker": peer,
-            "P/E": np.nan,
-            "EV/EBITDA": np.nan,
-            "P/S": np.nan
-        })
+        except Exception:
+
+            peer_rows.append({
+                "Ticker": peer,
+                "P/E": np.nan,
+                "EV/EBITDA": np.nan,
+                "P/S": np.nan
+            })
 
 
 peer_df = pd.DataFrame(peer_rows)
 
+median_pe = np.nan
+median_ev_ebitda = np.nan
+median_ps = np.nan
+
+implied_pe = np.nan
+implied_ev_ebitda = np.nan
+implied_ps = np.nan
+
 if not peer_df.empty:
 
-    st.subheader("Peer Valuation Multiples")
+    st.subheader("Peer Multiples")
 
     st.dataframe(
         peer_df.style.format({
@@ -1114,13 +1250,15 @@ if not peer_df.empty:
         width="stretch"
     )
 
-    # Median multiples
+    # Median calculations
 
-    median_pe = peer_df["P/E"].dropna().median()
+    median_pe = peer_median(peer_df, "P/E")
 
-    median_ev_ebitda = peer_df["EV/EBITDA"].dropna().median()
+    median_ev_ebitda = peer_median(
+        peer_df, "EV/EBITDA"
+    )
 
-    median_ps = peer_df["P/S"].dropna().median()
+    median_ps = peer_median(peer_df, "P/S")
 
     median_row = pd.DataFrame({
         "Ticker": ["PEER MEDIAN"],
@@ -1134,58 +1272,99 @@ if not peer_df.empty:
         ignore_index=True
     )
 
-    st.subheader("Peer Median Multiples")
+    st.subheader("Peer Median")
+
+    def highlight_median(row):
+
+        if row["Ticker"] == "PEER MEDIAN":
+
+            return [
+                "background-color: #355E3B; color: white; "
+                "font-weight: bold"
+            ] * len(row)
+
+        return [""] * len(row)
 
     st.dataframe(
         peer_display.style.format({
             "P/E": "{:.2f}x",
             "EV/EBITDA": "{:.2f}x",
             "P/S": "{:.2f}x"
-        }, na_rep="N/A").highlight_max(
-            axis=0,
-            subset=["P/E", "EV/EBITDA", "P/S"],
-            color="#355E3B"
+        }, na_rep="N/A").apply(
+            highlight_median,
+            axis=1
         ),
         width="stretch"
     )
 
+else:
+
+    st.warning(
+        "No peer data available. Check the peer tickers."
+    )
+
 
 # ------------------------------------------------------------
-# 10. IMPLIED SHARE PRICE FROM COMPARABLES
+# COMPANY METRICS FOR COMPS
 # ------------------------------------------------------------
 
-st.subheader("Comparable Company Implied Valuation")
-
-# Company metrics
-
-company_eps = scalar(
-    info.get("trailingEps"),
-    np.nan
+company_eps = number(
+    info.get("trailingEps")
 )
 
-company_ebitda = scalar(
-    info.get("ebitda"),
-    np.nan
+company_ebitda = number(
+    info.get("ebitda")
 )
 
-company_revenue = get_value(
+company_revenue = latest_value(
     income,
     "Total Revenue",
     "Operating Revenue"
 )
 
-# P/E implied price
+# Fallback EBITDA calculation:
+# EBITDA = Operating Income + Depreciation & Amortization
 
-implied_pe = (
-    median_pe * company_eps
-    if pd.notna(median_pe) and pd.notna(company_eps)
-    and company_eps > 0 and median_pe > 0
-    else np.nan
-)
+if pd.isna(company_ebitda):
 
-# EV/EBITDA implied price
+    operating_income_latest = latest_value(
+        income,
+        "Operating Income"
+    )
 
-implied_ev_ebitda = np.nan
+    depreciation = latest_value(
+        cashflow,
+        "Depreciation And Amortization",
+        "Depreciation Amortization Depletion"
+    )
+
+    if (
+        pd.notna(operating_income_latest)
+        and pd.notna(depreciation)
+    ):
+
+        company_ebitda = (
+            operating_income_latest + depreciation
+        )
+
+
+# ------------------------------------------------------------
+# IMPLIED VALUATION
+# ------------------------------------------------------------
+
+# P/E: Equity multiple
+
+if (
+    pd.notna(median_pe)
+    and pd.notna(company_eps)
+    and median_pe > 0
+    and company_eps > 0
+):
+
+    implied_pe = median_pe * company_eps
+
+
+# EV/EBITDA: Enterprise value multiple
 
 if (
     pd.notna(median_ev_ebitda)
@@ -1196,33 +1375,51 @@ if (
     and shares > 0
 ):
 
-    implied_ev = median_ev_ebitda * company_ebitda
+    implied_enterprise = (
+        median_ev_ebitda * company_ebitda
+    )
 
-    implied_equity = implied_ev + cash - debt
+    implied_equity = (
+        implied_enterprise + cash - debt
+    )
 
-    implied_ev_ebitda = implied_equity / shares
+    implied_ev_ebitda = (
+        implied_equity / shares
+    )
 
 
-# P/S implied price
+# P/S: Equity multiple
 
-implied_ps = (
-    median_ps * company_revenue / shares
-    if pd.notna(median_ps)
+if (
+    pd.notna(median_ps)
     and pd.notna(company_revenue)
     and pd.notna(shares)
     and median_ps > 0
     and shares > 0
-    else np.nan
-)
+):
 
+    implied_ps = (
+        median_ps * company_revenue / shares
+    )
+
+
+# ------------------------------------------------------------
+# COMPS RESULTS
+# ------------------------------------------------------------
+
+st.subheader("Implied Share Price by Multiple")
 
 comps_values = pd.DataFrame({
-    "Method": [
+    "Valuation Method": [
         "P/E",
         "EV/EBITDA",
         "P/S"
     ],
-
+    "Peer Median Multiple": [
+        median_pe,
+        median_ev_ebitda,
+        median_ps
+    ],
     "Implied Share Price": [
         implied_pe,
         implied_ev_ebitda,
@@ -1232,6 +1429,7 @@ comps_values = pd.DataFrame({
 
 st.dataframe(
     comps_values.style.format({
+        "Peer Median Multiple": "{:.2f}x",
         "Implied Share Price": "${:.2f}"
     }, na_rep="N/A"),
     width="stretch"
@@ -1239,20 +1437,19 @@ st.dataframe(
 
 
 # ------------------------------------------------------------
-# 11. VALUATION COMPARISON
+# THREE-WAY VALUATION COMPARISON
 # ------------------------------------------------------------
 
-st.subheader("Three-Way Valuation Comparison")
+st.subheader("DCF vs. Comparable Valuation vs. Market Price")
 
 valuation_comparison = pd.DataFrame({
-    "Method": [
-        "DCF Intrinsic Value",
-        "Comparable Valuation — P/E",
-        "Comparable Valuation — EV/EBITDA",
-        "Comparable Valuation — P/S",
-        "Current Market Price"
+    "Valuation Method": [
+        "DCF",
+        "P/E",
+        "EV/EBITDA",
+        "P/S",
+        "Market Price"
     ],
-
     "Share Price": [
         intrinsic_value,
         implied_pe,
@@ -1271,10 +1468,10 @@ st.dataframe(
 
 fig_comps = px.bar(
     valuation_comparison.dropna(),
-    x="Method",
+    x="Valuation Method",
     y="Share Price",
     text="Share Price",
-    title="MRK Valuation Methods Compared",
+    title="MRK Valuation Comparison",
     template="plotly_dark"
 )
 
@@ -1293,324 +1490,403 @@ st.plotly_chart(
     width="stretch"
 )
 
-# Explain differences
-
-st.subheader("Valuation Interpretation")
-
 st.markdown("""
-**Why valuation methods differ:**
+**Why the values differ:**
 
-- **DCF:** Estimates intrinsic value based on projected future free cash flow,
-  discount rates and terminal growth.
-- **P/E:** Reflects the market's valuation of earnings relative to peer companies.
-- **EV/EBITDA:** Compares operating enterprise value while accounting for
-  differences in capital structure.
-- **P/S:** Compares market capitalization relative to sales.
+- **DCF:** Based on projected future free cash flows and discount rates.
+- **P/E:** Reflects the market's valuation of earnings.
+- **EV/EBITDA:** Values operating earnings before financing and taxes.
+- **P/S:** Compares market capitalization with company sales.
+- **Market Price:** Represents the current market's assessment of MRK.
 
-Differences between the methods can reflect growth expectations, profitability,
-capital structure, risk, accounting differences and market sentiment.
+Differences can reflect growth expectations, profitability, capital structure,
+risk, accounting policies and market sentiment.
 """)
 
 
-# ------------------------------------------------------------
-# 12. SENSITIVITY ANALYSIS
-# ------------------------------------------------------------
+# ============================================================
+# PART 4 — SENSITIVITY ANALYSIS
+# ============================================================
 
 st.header("Part 4 | Sensitivity Analysis")
 
 st.write(
-    "The table measures how intrinsic value changes when WACC "
-    "and terminal growth assumptions change."
+    "The sensitivity analysis measures how DCF intrinsic value changes "
+    "when WACC, terminal growth and forecast FCF growth assumptions change."
 )
 
-# Grid centered on base case
 
-wacc_values = np.linspace(
-    max(-0.05, adjusted_wacc - 0.02),
-    adjusted_wacc + 0.02,
-    9
-)
+if dcf is not None:
 
-growth_values = np.linspace(
-    max(-0.02, terminal_growth - 0.02),
-    terminal_growth + 0.02,
-    9
-)
+    # --------------------------------------------------------
+    # WACC x TERMINAL GROWTH
+    # --------------------------------------------------------
 
-sensitivity = pd.DataFrame(
-    index=np.round(wacc_values * 100, 2),
-    columns=np.round(growth_values * 100, 2),
-    dtype=float
-)
+    st.subheader("WACC vs. Terminal Growth")
 
-for w in wacc_values:
+    # Center the grid exactly on the base case.
 
-    for g in growth_values:
+    wacc_values = (
+        adjusted_wacc
+        + np.linspace(-0.02, 0.02, 9)
+    )
 
-        if w <= g:
+    growth_values = (
+        terminal_growth
+        + np.linspace(-0.02, 0.02, 9)
+    )
+
+    sensitivity = pd.DataFrame(
+        index=np.round(wacc_values * 100, 3),
+        columns=np.round(growth_values * 100, 3),
+        dtype=float
+    )
+
+    for w in wacc_values:
+
+        for g in growth_values:
+
+            if w <= g:
+                continue
+
+            result = calculate_dcf(
+                base_fcf,
+                growth,
+                g,
+                years,
+                w,
+                cash,
+                debt,
+                shares
+            )
+
             sensitivity.loc[
-                round(w * 100, 2),
-                round(g * 100, 2)
-            ] = np.nan
-
-        else:
-
-            try:
-
-                result = calculate_dcf(
-                    base_fcf,
-                    growth,
-                    g,
-                    years,
-                    w,
-                    cash,
-                    debt,
-                    shares
-                )
-
-                sensitivity.loc[
-                    round(w * 100, 2),
-                    round(g * 100, 2)
-                ] = result["intrinsic"]
-
-            except ValueError:
-                pass
+                round(w * 100, 3),
+                round(g * 100, 3)
+            ] = result["intrinsic"]
 
 
-st.subheader("WACC vs. Terminal Growth")
+    # Base case is the center of the grid.
 
-# Heatmap
+    base_row = 4
+    base_col = 4
 
-fig_heatmap = go.Figure(
-    data=go.Heatmap(
-        z=sensitivity.values,
-        x=sensitivity.columns,
-        y=sensitivity.index,
-        colorscale="RdYlGn",
-        colorbar=dict(title="Value / Share"),
-        hovertemplate=(
-            "Terminal Growth: %{x}%<br>"
-            "WACC: %{y}%<br>"
-            "Intrinsic Value: $%{z:.2f}"
-            "<extra></extra>"
+    base_case_value = sensitivity.iloc[
+        base_row,
+        base_col
+    ]
+
+    st.subheader("Base Case Verification")
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Base WACC",
+        percent(adjusted_wacc)
+    )
+
+    c2.metric(
+        "Terminal Growth",
+        percent(terminal_growth)
+    )
+
+    c3.metric(
+        "Base Intrinsic Value",
+        money(base_case_value)
+    )
+
+
+    # --------------------------------------------------------
+    # HEATMAP
+    # --------------------------------------------------------
+
+    fig_heatmap = go.Figure(
+        data=go.Heatmap(
+            z=sensitivity.values,
+            x=sensitivity.columns,
+            y=sensitivity.index,
+            colorscale="RdYlGn",
+            colorbar={
+                "title": "Value / Share"
+            },
+            hovertemplate=(
+                "Terminal Growth: %{x}%<br>"
+                "WACC: %{y}%<br>"
+                "Intrinsic Value: $%{z:.2f}"
+                "<extra></extra>"
+            )
         )
     )
-)
 
-# Mark base case
+    # Mark base case
 
-fig_heatmap.add_trace(
-    go.Scatter(
-        x=[terminal_growth * 100],
-        y=[adjusted_wacc * 100],
-        mode="markers+text",
-        marker=dict(
-            symbol="star",
-            size=18,
-            color="white",
-            line=dict(color="black", width=1)
+    fig_heatmap.add_trace(
+        go.Scatter(
+            x=[round(terminal_growth * 100, 3)],
+            y=[round(adjusted_wacc * 100, 3)],
+            mode="markers+text",
+            marker={
+                "symbol": "star",
+                "size": 20,
+                "color": "white",
+                "line": {
+                    "color": "black",
+                    "width": 1
+                }
+            },
+            text=["BASE CASE"],
+            textposition="top center",
+            name="Base Case"
+        )
+    )
+
+    fig_heatmap.update_layout(
+        title="Intrinsic Value: WACC vs. Terminal Growth",
+        xaxis_title="Terminal Growth (%)",
+        yaxis_title="WACC (%)",
+        template="plotly_dark",
+        height=550
+    )
+
+    st.plotly_chart(
+        fig_heatmap,
+        width="stretch"
+    )
+
+
+    # --------------------------------------------------------
+    # COLOR-GRADED TABLE
+    # --------------------------------------------------------
+
+    st.subheader("Sensitivity Table — Value per Share")
+
+    def highlight_base(data):
+
+        styles = pd.DataFrame(
+            "",
+            index=data.index,
+            columns=data.columns
+        )
+
+        styles.iloc[base_row, base_col] = (
+            "background-color: yellow; "
+            "color: black; "
+            "font-weight: bold; "
+            "border: 2px solid black;"
+        )
+
+        return styles
+
+    st.dataframe(
+        sensitivity.style.format(
+            "${:.2f}",
+            na_rep="N/A"
+        ).background_gradient(
+            cmap="RdYlGn",
+            axis=None
+        ).apply(
+            highlight_base,
+            axis=None
         ),
-        text=["BASE CASE"],
-        textposition="top center",
-        name="Base Case"
-    )
-)
-
-fig_heatmap.update_layout(
-    title="DCF Sensitivity: WACC vs. Terminal Growth",
-    xaxis_title="Terminal Growth (%)",
-    yaxis_title="WACC (%)",
-    template="plotly_dark",
-    height=550
-)
-
-st.plotly_chart(
-    fig_heatmap,
-    width="stretch"
-)
-
-st.caption(
-    "The white star identifies the base-case assumptions. "
-    "Green indicates higher intrinsic value; red indicates lower intrinsic value."
-)
-
-# Numerical sensitivity table
-
-st.subheader("Sensitivity Table — Intrinsic Value per Share")
-
-st.dataframe(
-    sensitivity.style.format(
-        "${:.2f}",
-        na_rep="N/A"
-    ).background_gradient(
-        cmap="RdYlGn",
-        axis=None
-    ),
-    width="stretch"
-)
-
-
-# ------------------------------------------------------------
-# 13. WHICH ASSUMPTION MOVES VALUATION MOST?
-# ------------------------------------------------------------
-
-st.subheader("Sensitivity Interpretation")
-
-# Compare WACC and terminal growth impact
-
-valid_sensitivity = sensitivity.stack().dropna()
-
-if not valid_sensitivity.empty:
-
-    wacc_impact = sensitivity.max(axis=1).max() - sensitivity.min(axis=1).min()
-
-    growth_impact = sensitivity.max(axis=0).max() - sensitivity.min(axis=0).min()
-
-    # Compare full-range variation along each dimension
-    wacc_range = (
-        sensitivity.iloc[0].dropna().mean()
-        - sensitivity.iloc[-1].dropna().mean()
+        width="stretch"
     )
 
-    growth_range = (
-        sensitivity.iloc[:, -1].dropna().mean()
-        - sensitivity.iloc[:, 0].dropna().mean()
+
+    # --------------------------------------------------------
+    # WHICH ASSUMPTION MOVES VALUATION MOST?
+    # --------------------------------------------------------
+
+    st.subheader("Sensitivity Interpretation")
+
+    # Average valuation across terminal growth
+    # for each WACC.
+
+    wacc_means = sensitivity.mean(axis=1)
+
+    # Average valuation across WACC
+    # for each terminal growth.
+
+    growth_means = sensitivity.mean(axis=0)
+
+    wacc_impact = (
+        wacc_means.max() - wacc_means.min()
     )
 
-    sensitivity_col1, sensitivity_col2 = st.columns(2)
-
-    sensitivity_col1.metric(
-        "WACC Range Impact",
-        f"${abs(wacc_range):.2f}"
+    terminal_impact = (
+        growth_means.max() - growth_means.min()
     )
 
-    sensitivity_col2.metric(
-        "Terminal Growth Range Impact",
-        f"${abs(growth_range):.2f}"
+    col1, col2 = st.columns(2)
+
+    col1.metric(
+        "WACC Valuation Impact",
+        money(wacc_impact)
     )
 
-    if abs(wacc_range) > abs(growth_range):
+    col2.metric(
+        "Terminal Growth Impact",
+        money(terminal_impact)
+    )
+
+    if wacc_impact > terminal_impact:
 
         st.info(
-            "WACC has the larger valuation impact across the tested grid."
+            "WACC has the greater valuation impact across the tested grid."
+        )
+
+    elif terminal_impact > wacc_impact:
+
+        st.info(
+            "Terminal growth has the greater valuation impact across the tested grid."
         )
 
     else:
 
         st.info(
-            "Terminal growth has the larger valuation impact across the tested grid."
-        )
-
-    if pd.notna(market_price):
-
-        st.write("**Relative to the current market price:**")
-
-        cheap_cells = (
-            sensitivity < market_price
-        ).sum().sum()
-
-        expensive_cells = (
-            sensitivity > market_price
-        ).sum().sum()
-
-        total_cells = sensitivity.notna().sum().sum()
-
-        st.write(
-            f"- Intrinsic value below market price: "
-            f"{cheap_cells} of {total_cells} valid scenarios."
-        )
-
-        st.write(
-            f"- Intrinsic value above market price: "
-            f"{expensive_cells} of {total_cells} valid scenarios."
+            "Both assumptions have similar valuation impacts across the tested grid."
         )
 
 
-# ------------------------------------------------------------
-# 14. OPTIONAL SECOND SENSITIVITY GRID
-# ------------------------------------------------------------
+    # --------------------------------------------------------
+    # CHEAP VS. EXPENSIVE
+    # --------------------------------------------------------
 
-st.subheader("Additional Sensitivity: Forecast Growth vs. WACC")
+    if pd.notna(market_price) and market_price > 0:
 
-forecast_growth_values = np.linspace(
-    growth - 0.03,
-    growth + 0.03,
-    7
-)
+        valid_values = sensitivity.stack().dropna()
 
-forecast_wacc_values = np.linspace(
-    max(-0.05, adjusted_wacc - 0.02),
-    adjusted_wacc + 0.02,
-    7
-)
+        cheaper = (valid_values > market_price).sum()
 
-growth_sensitivity = pd.DataFrame(
-    index=np.round(forecast_wacc_values * 100, 2),
-    columns=np.round(forecast_growth_values * 100, 2),
-    dtype=float
-)
+        more_expensive = (valid_values < market_price).sum()
 
-for w in forecast_wacc_values:
+        total = len(valid_values)
 
-    for g in forecast_growth_values:
+        st.subheader("Market Price Comparison")
 
-        if w <= terminal_growth:
-            continue
+        c1, c2, c3 = st.columns(3)
 
-        result = calculate_dcf(
-            base_fcf,
-            g,
-            terminal_growth,
-            years,
-            w,
-            cash,
-            debt,
-            shares
+        c1.metric(
+            "Scenarios Above Market",
+            f"{cheaper} / {total}"
         )
 
-        growth_sensitivity.loc[
-            round(w * 100, 2),
-            round(g * 100, 2)
-        ] = result["intrinsic"]
+        c2.metric(
+            "Scenarios Below Market",
+            f"{more_expensive} / {total}"
+        )
+
+        c3.metric(
+            "Current Market Price",
+            money(market_price)
+        )
+
+        st.caption(
+            "Above market means the model estimates intrinsic value "
+            "higher than the current market price."
+        )
 
 
-fig_growth_sensitivity = px.imshow(
-    growth_sensitivity,
-    labels={
-        "x": "Forecast FCF Growth (%)",
-        "y": "WACC (%)",
-        "color": "Intrinsic Value"
-    },
-    color_continuous_scale="RdYlGn",
-    aspect="auto",
-    title="Forecast Growth vs. WACC"
-)
+    # --------------------------------------------------------
+    # SECOND GRID: FORECAST GROWTH x WACC
+    # --------------------------------------------------------
 
-st.plotly_chart(
-    fig_growth_sensitivity,
-    width="stretch"
-)
+    st.subheader("Forecast FCF Growth vs. WACC")
+
+    forecast_growth_values = (
+        growth + np.linspace(-0.03, 0.03, 7)
+    )
+
+    forecast_wacc_values = (
+        adjusted_wacc + np.linspace(-0.02, 0.02, 7)
+    )
+
+    growth_sensitivity = pd.DataFrame(
+        index=np.round(forecast_wacc_values * 100, 3),
+        columns=np.round(forecast_growth_values * 100, 3),
+        dtype=float
+    )
+
+    for w in forecast_wacc_values:
+
+        for g in forecast_growth_values:
+
+            if w <= terminal_growth:
+                continue
+
+            result = calculate_dcf(
+                base_fcf,
+                g,
+                terminal_growth,
+                years,
+                w,
+                cash,
+                debt,
+                shares
+            )
+
+            growth_sensitivity.loc[
+                round(w * 100, 3),
+                round(g * 100, 3)
+            ] = result["intrinsic"]
 
 
-# ------------------------------------------------------------
-# 15. BULL / BASE / BEAR SCENARIO SUMMARY
-# ------------------------------------------------------------
+    fig_growth_sensitivity = px.imshow(
+        growth_sensitivity,
+        labels={
+            "x": "Forecast FCF Growth (%)",
+            "y": "WACC (%)",
+            "color": "Intrinsic Value"
+        },
+        color_continuous_scale="RdYlGn",
+        aspect="auto",
+        title="Forecast Growth vs. WACC"
+    )
 
-st.header("Part 5 | Bull, Base and Bear Scenarios")
+    st.plotly_chart(
+        fig_growth_sensitivity,
+        width="stretch"
+    )
+
+    st.dataframe(
+        growth_sensitivity.style.format(
+            "${:.2f}",
+            na_rep="N/A"
+        ).background_gradient(
+            cmap="RdYlGn",
+            axis=None
+        ),
+        width="stretch"
+    )
+
+else:
+
+    st.warning(
+        "Sensitivity analysis requires a valid DCF valuation. "
+        "Resolve the WACC, FCF or shares outstanding issue above."
+    )
+
+
+# ============================================================
+# PART 5 — BULL / BASE / BEAR SCENARIOS
+# ============================================================
+
+st.header("Part 5 | Bull / Base / Bear Scenarios")
 
 scenario_results = []
 
-for scenario_name, assumptions in scenario_settings.items():
+if wacc_available and pd.notna(base_fcf) and base_fcf > 0 and pd.notna(shares) and shares > 0:
 
-    scenario_g = assumptions["growth"]
-    scenario_tg = assumptions["terminal"]
+    for name, assumptions in scenario_settings.items():
 
-    if adjusted_wacc <= scenario_tg:
-        scenario_value = np.nan
+        scenario_g = assumptions["growth"]
 
-    else:
+        scenario_tg = assumptions["terminal"]
 
-        try:
+        if adjusted_wacc <= scenario_tg:
+
+            scenario_value = np.nan
+
+        else:
 
             scenario_dcf = calculate_dcf(
                 base_fcf,
@@ -1625,127 +1901,126 @@ for scenario_name, assumptions in scenario_settings.items():
 
             scenario_value = scenario_dcf["intrinsic"]
 
-        except ValueError:
-
-            scenario_value = np.nan
-
-    scenario_results.append({
-        "Scenario": scenario_name,
-        "Forecast Growth": scenario_g,
-        "Terminal Growth": scenario_tg,
-        "WACC": adjusted_wacc,
-        "Intrinsic Value": scenario_value
-    })
+        scenario_results.append({
+            "Scenario": name,
+            "Forecast Growth": scenario_g,
+            "Terminal Growth": scenario_tg,
+            "WACC": adjusted_wacc,
+            "Intrinsic Value": scenario_value
+        })
 
 
-scenario_df = pd.DataFrame(scenario_results)
+    scenario_df = pd.DataFrame(scenario_results)
 
-if pd.notna(market_price):
+    if pd.notna(market_price) and market_price > 0:
 
-    scenario_df["Upside / Downside"] = (
-        scenario_df["Intrinsic Value"] / market_price - 1
-    ) * 100
+        scenario_df["Upside / Downside"] = (
+            scenario_df["Intrinsic Value"] / market_price - 1
+        )
 
-st.dataframe(
-    scenario_df.style.format({
-        "Forecast Growth": "{:.2%}",
-        "Terminal Growth": "{:.2%}",
-        "WACC": "{:.2%}",
-        "Intrinsic Value": "${:.2f}",
-        "Upside / Downside": "{:.2f}%"
-    }, na_rep="N/A"),
-    width="stretch"
-)
+    st.subheader("Scenario Valuation Table")
 
-# Scenario chart
-
-fig_scenarios = px.bar(
-    scenario_df,
-    x="Scenario",
-    y="Intrinsic Value",
-    color="Scenario",
-    text="Intrinsic Value",
-    title="MRK Bull / Base / Bear Valuation",
-    template="plotly_dark",
-    color_discrete_map={
-        "Bull": "green",
-        "Base": "royalblue",
-        "Bear": "red"
-    }
-)
-
-fig_scenarios.update_traces(
-    texttemplate="$%{text:.2f}",
-    textposition="outside"
-)
-
-if pd.notna(market_price):
-
-    fig_scenarios.add_hline(
-        y=market_price,
-        line_dash="dash",
-        annotation_text="Market Price"
+    st.dataframe(
+        scenario_df.style.format({
+            "Forecast Growth": "{:.2%}",
+            "Terminal Growth": "{:.2%}",
+            "WACC": "{:.2%}",
+            "Intrinsic Value": "${:.2f}",
+            "Upside / Downside": "{:.2%}"
+        }, na_rep="N/A"),
+        width="stretch"
     )
 
-st.plotly_chart(
-    fig_scenarios,
-    width="stretch"
-)
+    fig_scenarios = px.bar(
+        scenario_df,
+        x="Scenario",
+        y="Intrinsic Value",
+        color="Scenario",
+        text="Intrinsic Value",
+        color_discrete_map={
+            "Bull": "green",
+            "Base": "royalblue",
+            "Bear": "red"
+        },
+        title="MRK Scenario Valuation",
+        template="plotly_dark"
+    )
+
+    fig_scenarios.update_traces(
+        texttemplate="$%{text:.2f}",
+        textposition="outside"
+    )
+
+    if pd.notna(market_price):
+
+        fig_scenarios.add_hline(
+            y=market_price,
+            line_dash="dash",
+            annotation_text="Current Market Price"
+        )
+
+    st.plotly_chart(
+        fig_scenarios,
+        width="stretch"
+    )
+
+else:
+
+    st.warning(
+        "Scenario valuation requires valid FCF, WACC and shares outstanding."
+    )
 
 
-# ------------------------------------------------------------
-# 16. FINAL SUMMARY
-# ------------------------------------------------------------
+# ============================================================
+# FINAL SUMMARY
+# ============================================================
 
 st.header("Investment Valuation Summary")
 
-summary1, summary2, summary3 = st.columns(3)
+col1, col2, col3 = st.columns(3)
 
-summary1.metric(
+col1.metric(
     "DCF Intrinsic Value",
-    format_money(intrinsic_value)
+    money(intrinsic_value)
 )
 
-summary2.metric(
+col2.metric(
     "Market Price",
-    format_money(market_price)
+    money(market_price)
 )
 
-summary3.metric(
-    "Implied Upside / Downside",
-    f"{upside:.2f}%" if pd.notna(upside) else "N/A"
+col3.metric(
+    "Upside / Downside",
+    percent(upside)
 )
 
-st.markdown("---")
+st.divider()
+
+st.subheader("Key Investment Considerations")
 
 st.markdown("""
-### Key Investment Considerations
+1. **Fundamentals:** Evaluate historical revenue, net income and free cash flow.
 
-1. **Fundamentals:** Evaluate historical revenue, net income and free cash flow
-   before relying on projected growth.
+2. **Capital Structure:** CAPM estimates cost of equity, while WACC incorporates
+   the cost of debt and market-value capital weights.
 
-2. **Capital Structure:** WACC reflects the company's cost of equity,
-   after-tax cost of debt and market-value financing weights.
+3. **DCF:** Intrinsic value depends on forecast free cash flow, WACC and
+   terminal growth.
 
-3. **DCF Valuation:** Terminal value represents the discounted value of
-   cash flows beyond the explicit forecast period.
+4. **Comparable Companies:** Peer multiples provide market-based valuation
+   references.
 
-4. **Comparable Valuation:** Peer multiples provide a market-based reference
-   point, but differences in growth and profitability can explain valuation gaps.
+5. **Sensitivity:** Evaluate how changes in WACC and growth assumptions
+   affect intrinsic value.
 
-5. **Sensitivity:** DCF results are highly dependent on discount rate and
-   terminal growth assumptions.
-
-6. **Scenarios:** Bull, base and bear cases illustrate how different
-   assumptions affect estimated intrinsic value.
+6. **Scenarios:** Bull, base and bear cases illustrate different
+   potential valuation outcomes.
 """)
 
 st.caption(
-    "Educational valuation model. Financial data and valuation assumptions "
-    "should be independently verified before investment decisions."
+    "Data source: Yahoo Finance via yfinance. "
+    "CSV fallback available. Educational valuation model."
 )
-
-st.markdown("---")
 
 st.caption(
     f"Equity Research Dashboard | {ticker} | "
