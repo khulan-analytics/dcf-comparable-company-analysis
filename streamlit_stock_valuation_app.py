@@ -1,4 +1,4 @@
-
+pip install streamlit yfinance pandas numpy plotly
 import warnings
 import numpy as np
 import pandas as pd
