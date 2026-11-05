@@ -4,7 +4,7 @@
 # Fundamentals | DCF | CAPM/WACC | Comparable Companies
 # Sensitivity Analysis | Bull/Base/Bear Scenarios
 # ============================================================
-
+pip install streamlit yfinance pandas numpy plotly
 import streamlit as st
 import yfinance as yf
 import pandas as pd
